@@ -1,5 +1,3 @@
-// Copyright (c) Jupyter Development Team.
-// Distributed under the terms of the Modified BSD License.
 
 import {
   ILabShell,
@@ -15,7 +13,9 @@ import {
   WidgetTracker,
   ICommandPalette,
   InputDialog,
-  showErrorMessage
+  showErrorMessage,
+  Dialog,
+  showDialog
 } from '@jupyterlab/apputils';
 
 import {
@@ -35,6 +35,11 @@ import {
   IFileBrowserFactory
 } from '@jupyterlab/filebrowser';
 
+
+import { Git } from '@voziq/customgit/lib/git';
+
+
+
 import { Launcher } from '@jupyterlab/launcher';
 
 import { IMainMenu } from '@jupyterlab/mainmenu';
@@ -53,6 +58,8 @@ import { Message } from '@phosphor/messaging';
 
 import { Menu } from '@phosphor/widgets';
 
+
+
 /**
  * The command IDs used by the file browser plugin.
  */
@@ -67,6 +74,8 @@ namespace CommandIDs {
   export const cut = 'filebrowser:cut';
 
   export const del = 'filebrowser:delete';
+
+  export const delProject = 'filebrowser:deleteProject';  
 
   export const download = 'filebrowser:download';
 
@@ -86,6 +95,10 @@ namespace CommandIDs {
   export const paste = 'filebrowser:paste';
 
   export const createNewDirectory = 'filebrowser:create-new-directory';
+
+  export const createNewFile = 'filebrowser:create-new-file';
+
+  export const createNewMarkdownFile = 'filebrowser:create-new-markdown-file';
 
   export const rename = 'filebrowser:rename';
 
@@ -111,7 +124,7 @@ namespace CommandIDs {
  */
 const browser: JupyterFrontEndPlugin<void> = {
   activate: activateBrowser,
-  id: '@jupyterlab/filebrowser-extension:browser',
+  id: 'custom_flbrowser:browser',
   requires: [
     IFileBrowserFactory,
     IDocumentManager,
@@ -128,7 +141,7 @@ const browser: JupyterFrontEndPlugin<void> = {
  */
 const factory: JupyterFrontEndPlugin<IFileBrowserFactory> = {
   activate: activateFactory,
-  id: '@jupyterlab/filebrowser-extension:factory',
+  id: 'custom_flbrowser:factory',
   provides: IFileBrowserFactory,
   requires: [IIconRegistry, IDocumentManager, IStateDB]
 };
@@ -146,7 +159,7 @@ const factory: JupyterFrontEndPlugin<IFileBrowserFactory> = {
  */
 const shareFile: JupyterFrontEndPlugin<void> = {
   activate: activateShareFile,
-  id: '@jupyterlab/filebrowser-extension:share-file',
+  id: 'custom_flbrowser:share-file',
   requires: [IFileBrowserFactory],
   autoStart: true
 };
@@ -155,7 +168,7 @@ const shareFile: JupyterFrontEndPlugin<void> = {
  * A plugin providing file upload status.
  */
 export const fileUploadStatus: JupyterFrontEndPlugin<void> = {
-  id: '@jupyterlab/filebrowser-extension:file-upload-status',
+  id: 'custom_flbrowser:file-upload-status',
   autoStart: true,
   requires: [IFileBrowserFactory],
   optional: [IStatusBar],
@@ -173,7 +186,7 @@ export const fileUploadStatus: JupyterFrontEndPlugin<void> = {
     });
 
     statusBar.registerStatusItem(
-      '@jupyterlab/filebrowser-extension:file-upload-status',
+      'custom_flbrowser:file-upload-status',
       {
         item,
         align: 'middle',
@@ -310,7 +323,7 @@ function activateBrowser(
     let navigateToCurrentDirectory: boolean = false;
 
     void settingRegistry
-      .load('@jupyterlab/filebrowser-extension:browser')
+      .load('custom_flbrowser:browser')
       .then(settings => {
         settings.changed.connect(settings => {
           navigateToCurrentDirectory = settings.get(
@@ -397,7 +410,45 @@ function addCommands(
     iconClass: 'jp-MaterialIcon jp-CloseIcon',
     label: 'Delete',
     mnemonic: 0
-  });
+  });  
+    
+    commands.addCommand(CommandIDs.delProject, {
+    execute: async () => {
+    const widget = tracker.currentWidget;
+	    let gitApi = new Git();
+		const path = encodeURI(widget.selectedItems().next().path);
+		const name = encodeURI(widget.selectedItems().next().name);
+		 const message ="Are you sure you want to permanently delete:"+path;
+     const result = await showDialog({
+      title: 'Delete',
+      body: message,      
+      buttons: [Dialog.cancelButton(), Dialog.warnButton({ label: 'Delete' })]
+    });
+    if (result.button.accept) {     
+      gitApi
+      .delItem(path, name)
+      .then(response => {
+        if (response.code !== 0) {
+           return showDialog({
+      title: 'Delete failed',
+      body: response.message,
+      buttons: [Dialog.warnButton({ label: 'DISMISS' })]
+    }).then(() => {
+      // NO-OP
+    });
+        }
+      })
+    } else {
+      // NOOP
+    }
+    },
+	iconClass: 'jp-MaterialIcon jp-CloseIcon',
+    label: 'Delete Project',
+    mnemonic: 0
+  }); 
+  
+  
+
 
   commands.addCommand(CommandIDs.copy, {
     execute: () => {
@@ -479,7 +530,7 @@ function addCommands(
   });
 
   commands.addCommand(CommandIDs.openPath, {
-    label: args => (args.path ? `Open ${args.path}` : 'Open from Pathâ€¦'),
+    label: args => (args.path ? `Open ${args.path}` : 'Open from Path…'),
     caption: args => (args.path ? `Open ${args.path}` : 'Open from path'),
     execute: async ({ path }: { path?: string }) => {
       if (!path) {
@@ -640,6 +691,36 @@ function addCommands(
     label: 'New Folder'
   });
 
+  commands.addCommand(CommandIDs.createNewFile, {
+    execute: () => {
+      const {
+        model: { path }
+      } = browser;
+      commands.execute('docmanager:new-untitled', {
+        path,
+        type: 'file',
+        ext: 'txt'
+      });
+    },
+    iconClass: 'jp-MaterialIcon jp-TextEditorIcon',
+    label: 'New File'
+  });
+
+  commands.addCommand(CommandIDs.createNewMarkdownFile, {
+    execute: () => {
+      const {
+        model: { path }
+      } = browser;
+      commands.execute('docmanager:new-untitled', {
+        path,
+        type: 'file',
+        ext: 'md'
+      });
+    },
+    iconClass: 'jp-MaterialIcon jp-MarkdownIcon',
+    label: 'New Markdown File'
+  });
+
   commands.addCommand(CommandIDs.rename, {
     execute: args => {
       const widget = tracker.currentWidget;
@@ -737,7 +818,7 @@ function addCommands(
       const value = !browser.navigateToCurrentDirectory;
       const key = 'navigateToCurrentDirectory';
       return settingRegistry
-        .set('@jupyterlab/filebrowser-extension:browser', key, value)
+        .set('custom_flbrowser:browser', key, value)
         .catch((reason: Error) => {
           console.error(`Failed to set navigateToCurrentDirectory setting`);
         });
@@ -830,6 +911,7 @@ function addCommands(
   const selectorContent = '.jp-DirListing-content';
   // matches all filebrowser items
   const selectorItem = '.jp-DirListing-item[data-isdir]';
+   const selectorItemDel = '.jp-DirListing-item[data-isdir="true"]';
   // matches only non-directory items
   const selectorNotDir = '.jp-DirListing-item[data-isdir="false"]';
 
@@ -842,9 +924,21 @@ function addCommands(
   });
 
   app.contextMenu.addItem({
-    command: CommandIDs.paste,
+    command: CommandIDs.createNewFile,
     selector: selectorContent,
     rank: 2
+  });
+
+  app.contextMenu.addItem({
+    command: CommandIDs.createNewMarkdownFile,
+    selector: selectorContent,
+    rank: 3
+  });
+
+  app.contextMenu.addItem({
+    command: CommandIDs.paste,
+    selector: selectorContent,
+    rank: 4
   });
 
   app.contextMenu.addItem({
@@ -920,7 +1014,13 @@ function addCommands(
     command: CommandIDs.copyDownloadLink,
     selector: selectorNotDir,
     rank: 13
-  });
+  });  
+  app.contextMenu.addItem({
+    command: CommandIDs.delProject,
+    selector: selectorItemDel,
+    rank: 14
+  }); 
+  
 }
 
 /**
